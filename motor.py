@@ -5,6 +5,17 @@ import matplotlib.pyplot as plt
 
 logging.basicConfig(level = logging.DEBUG)
 
+def sim(sys, t0, tf, ts):
+    tlen = (tf - t0) /ts
+    t = t0
+    x = sys.x
+    while t < tf:
+        sys.step(ts, 10)
+        x = np.hstack((x, sys.x))
+        t += ts
+    t = np.linspace(t0, tf, x.shape[1])
+    return t, x.T
+
 def step(dx, x, ts):
     if ts <=0.:
         raise ValueError('Timestep must be positive')
@@ -17,38 +28,35 @@ def step(dx, x, ts):
 
 class DCMotor(object):
 
-    __params_default = {
+    __default_params = {
         'R' :  1., # Resistance.
         'L' :  1., # Inductance.
         'Kt':  1., # Torque Constant.
         'J' :  1., # Inertia.
         'Kb':  1., # Back-emf Constant.
         'Kf':  1.,  # Friction Coefficient.
-        'ts':  0.02 # Sampling Time.
     }
     
-    __x0_default = {
+    __default_x0 = {
         'position' :0.,
         'velocity' :0.,
         'current'  :0.
     }
 
+
     def __init__(self, **kwargs):
-        self.params = copy.deepcopy(self.__params_default)
+        self.params = copy.deepcopy(self.__default_params)
+        x0 = copy.deepcopy(self.__default_x0)
         try:
             self.params.update(kwargs['params'])
-            for k, v in self.params:
-                if v < 0.:
-                    self.params['k'] = 0.
-                    raise ValueError('Motor para meter %s must be positive.', k)
-        except:
-		    logging.info('Motor parameters not provided. Using default.')
-		
-        x0 = copy.deepcopy(self.__x0_default)
-        try:
-            x0.update(kwargs['initial_conditions'])
-        except:
-            logging.info('Motor initial conditions not provided. Setting as zero.')
+            logging.debug('Motor params: %s', self.params)
+        except Exception as e:
+            logging.info('%s. Using default parameters', e.message)
+
+        for k, v in self.params.iteritems():
+            if v < 0.:
+                raise ValueError('Motor parameter %s must be positive. Setting to one.', k);
+                self.params[k] = 1.
         
         self.x = np.zeros([3, 1])
         
@@ -63,52 +71,43 @@ class DCMotor(object):
             [0.], 
             [1. / self.params['L']]
         ])
-        
         self.x[0] = x0['position']
         self.x[1] = x0['velocity']
         self.x[2] = x0['current']
-        
+        logging.debug('A:\n\r%s', self.A)
+        logging.debug('B:\n\r%s', self.B)
         self.dim = self.x.size
     
-    def step(self, u = 0.):
+    def step(self, ts, u = 0.):
         dx = self.dynamics(u)
-        self.x = step(dx, self.x, self.params['ts'])
+        self.x = step(dx, self.x, ts)
         return self.x
     
     def dynamics(self, u):
-        dx = np.zeros([3, 1])
         try:
             self.A.reshape([3, 3])
             self.B.reshape([3, 1])
             self.x.reshape([3, 1])
-            dx = self.A.dot(self.x) + u * self.B
+            return self.A.dot(self.x) + u * self.B
         except:
             raise ValueError('System dimension mismatch')
-            dx = np.zeros([3, 1])
-        return dx
-        
-
+            return np.zeros([3, 1])
         
 if __name__ == '__main__':
 
-    def sim(sys, t0, tf, ts):
-        tlen = (tf - t0) /ts
-        t = t0
-        x = sys.x
-        while t < tf:
-            sys.step(100)
-            x = np.hstack((x, sys.x))
-            t += ts
-        t = np.linspace(t0, tf, x.shape[1])
-        return t, x.T
+    ti = 0.
+    tf = 3.
+    ts = 0.002
+    
+    vin = 1.
     
     params = {
-        'J': 0.1,
-        'Kb': 0.1,
-        'Kt': 0.1,
-        'R': 1.,
-        'L': 0.5,
-        'Kf': 0.01
+        'kf': 0.1, # Friction Coefficient.
+        'kb': 0.01, # Back-emf Coefficient.
+        'L': 0.5, # Armature Inductance.
+        'R': 0.1, # Resistance.
+        'J': 0.01, # Rotor Inertia.
+        'kt': 0.01, # Torque Constant.
     }
     
     x0 = {
@@ -117,12 +116,8 @@ if __name__ == '__main__':
         'current': 0.
     }
 
-    m = DCMotor(params = params, initial_conditions = x0)
-    t, x = sim(m, 0, 10., 0.02)
-    
+    m = DCMotor(params = params)
+    t, x = sim(m, ti, tf, ts)
     plt.plot(t, x)
-    plt.legend(['Position', 'Velocity', 'Current'], loc = 'best')
-    plt.title('Motor Response')
-    plt.xlabel('Time {s}')
-    plt.ylabel('States')
+    plt.legend(['position', 'veloctiy', 'current'], loc = 'best')
     plt.show()
