@@ -30,89 +30,47 @@ def create_axes(title = None, xlabel = None, ylabel = None, legend = None):
     ax.xaxis.grid(True, which = 'major')
     return fig, ax
   
-  
-class Buffer(object):
-
-    def __init__(self, data = None, on_new_data = None, on_err = None):
-        self.data = data
-        self.on_new_data = on_new_data
-        self.on_err = on_err
-        
-    def add_data(self, data):
-        if self.data is not None:
-            try:
-                self.data = np.vstack((self.data, data))
-            except ValueError:
-                logging.error('Data is stacked vertically!')
-                self.data = None
-                if self.on_err:
-                    self.on_err()
-                return
-        else:
-            self.data = data
-        if self.on_new_data:
-            self.on_new_data(self.data)
-            
-    def clear(self):
-        self.data = None
-            
-    def get_data(self):
-        if self.data is not None:
-            tmp = self.data
-            self.data = None
-            return tmp
-        else:
-            return None
 
 class Signal(object):
 
-    def __init__(self, xdata = None, ydata = None, on_new_data = None, on_err = None):
-        self.x_buffer = Buffer()
-        self.y_buffer = Buffer()
+    def __init__(self, data = None, on_new_data = None):
         self.on_new_data = on_new_data
-        self.on_err = on_err
-        if xdata is not None and ydata is not None:
-            try:
-                
-                self.add_data(xdata, ydata)
-            except ValueError:
-                logging.error('Invalid data!')
-                self.x_buffer.clear()
-                self.y_buffer.clear()
-                self._err()
-                
-    def has_data(self):
-        return self.x_buffer.data is not None and self.y_buffer.data is not None
-                
-    def has_valid_data(self):
-        if self.has_data():
-            return len(self.x_buffer.data) == len(self.y_buffer.data)
-        else:
-            # No data is valid data!
-            return True
-                
-    def get_data(self):
-        if self.has_valid_data():
-            return self.x_buffer.get_data(), self.y_buffer.get_data()
+        self.buffer = np.array([])
+        if data is not None:
+            self.buffer = np.append(self.buffer, data)
         
-    
-    def add_data(self, xdata, ydata):
-        logging.debug('xdata: %s, ydata: %s', len(xdata), len(ydata))
-        if len(xdata) != len(ydata):
-            raise ValueError('x-Axis data and y-Axis data must be the samen length')
+    def _new_data_callback(self, data):
+        if self.on_new_data:
+            self.on_new_data(data)     
+                        
+    def add_data(self, data):
+        if self.buffer.size == 0:
+            logging.debug('Buffer empty. Appending: %s', data)
+            # We append to the array if it's zero. vstack won't allow for stacking
+            # if arrays don't have the same dimentions.
+            self.buffer = np.append(self.buffer, data)
         else:
-            self.x_buffer.add_data(xdata)
-            self.y_buffer.add_data(ydata)
-            if self.on_new_data:
-                self.on_new_data(xdata, ydata)
-                    
-    def _err(self):
-        if self.on_err:
-            self.on_err()
-                 
-    def clear(self):
-        self.x_buffer.clear()
-        self.y_buffer.clear()
+            logging.debug('Buffer not empty. Stacking: %s', data)
+            # There's data. We can try to stack now.
+            self.buffer = np.vstack((self.buffer, data))
+            
+        self._new_data_callback(data)
+
+    def has_data(self):
+        return self.buffer.size > 0
+
+    def get_data(self, n = 0):
+        if n >= 0:
+            n -= 1
+            data = self.buffer[:n]
+            self.buffer = np.delete(self.buffer, slice(0, n))
+            return data
+        else:
+            raise ValueError('Number of data to get must be positive.')
+            
+    def get_timeseries(self, n = 0):
+        data = self.get_data(n)
+        return data[: ,0], data[: ,1:]
 
 if __name__ == '__main__':
 
@@ -137,23 +95,16 @@ if __name__ == '__main__':
     }
 
     m = motor.DCMotor(params = params, initial_conditions = x0)
-    s = Buffer()
-    S = Signal()
+    s = Signal()
     t = ti
-    T = [ti]
-    s.add_data(m.x.T)
     while t < tf - ts:
         t += ts
         x = m.step(ts, u = 100.)
-        s.add_data(x.T)
-        T.append(t)
-    data = s.get_data()
-    S.add_data(T, data)
-    signal_t, signal_x = S.get_data()
-    logging.debug('Data should be None: %s', s.data)
+        x = np.insert(x, 0, t)
+        s.add_data(x)
+    time, data = s.get_timeseries()
     #logging.debug('Signal data: %s', signal_data)
     fig, ax = create_axes()
-    ax.plot(signal_t, signal_x)
-    #ax.plot(signal_data[0], signal_data[1])
+    ax.plot(time, data)
     plt.show()
 

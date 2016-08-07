@@ -5,13 +5,16 @@ import matplotlib.pyplot as plt
 
 logging.basicConfig(level = logging.DEBUG)
 
-def sim(sys, t0, tf, ts):
+def motor_sim(m, t0, tf, ts, on_input = None):
     tlen = (tf - t0) /ts
     t = t0
-    x = sys.x
+    x = m.x
+    u = 100.
     while t < tf:
-        sys.step(ts, 10)
-        x = np.hstack((x, sys.x))
+        if on_input is not None:
+            u = on_input(x, t)
+        m.step(ts, u)
+        x = np.hstack((x, m.x))
         t += ts
     t = np.linspace(t0, tf, x.shape[1])
     return t, x.T
@@ -117,7 +120,7 @@ if __name__ == '__main__':
     }
 
     m = DCMotor(params = params)
-    t, x = sim(m, ti, tf, ts)
+    t, x = motor_sim(m, ti, tf, ts)
     plt.plot(t, x)
     plt.legend(['position', 'veloctiy', 'current'], loc = 'best')
     plt.show()
