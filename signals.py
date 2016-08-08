@@ -4,12 +4,12 @@ import copy
 import logging
 import math
 import matplotlib.pyplot as plt
-import motor
 import matplotlib.animation as animation
 import time
+import serial
+import json
 
 logging.basicConfig(level = logging.DEBUG)
-logging.getLogger().setLevel(logging.INFO)
 
 
 def create_axes(title = None, xlabel = None, ylabel = None, legend = None):
@@ -72,7 +72,6 @@ class Signal(object):
             # There's data. We can try to stack now.
             logging.debug('Buffer not empty. Stacking: %s', data)
             self.buffer = np.vstack((self.buffer, data))
-            
         self._new_data_callback(data)
 
     def has_data(self):
@@ -113,14 +112,54 @@ class Signal(object):
         else:
             logging.debug('Leaving get_timeseries: %s, %s', [], [])
             return None, None
+            
+class SerialSignal(Signal):
+
+    def __init__(self, port = '/dev/ttyACM0', baudrate = 9600, timeout = 1., rate = 10.):
+        self.port = serial.Serial(port, baudrate, timeout = timeout)
+        if not self.port.is_open:
+            self.port.open()
+        self._stop = True
+        self.rate = rate
+        super(Signal, self).__init__()
+        
+    def _read_data(self):
+        raw_data = self.port.readline()
+        try:
+            data = json.loads(raw_data)
+            logging.debug('Json data: %s', data)
+            # TODO: how do we handle multiple sensors in data stream?????!!
+            # Do we want to loop over all sensor labels:
+            # Accelerometer, Temperature, etc.
+            # And if the label does not exist in the dict the data
+            # is ignored????
+    
+        except ValueError:
+            logging.error('Could not read data!: %s', raw_data)
+        if not self._stop:
+            threading.Timer(self.rate / 1000., self._read_data).start()
+        
+    def start(self):
+        if not self.port.is_open:
+            self.port.open()
+        self._stop = False
+        self._read_data()
+        
+    def stop(self):
+        self._stop = True
+        self.port.close()
+
+
         
 class RealTimePlot(object):
 
-    def __init__(self, signal, title = None, xlabel = None, ylabel = None, legend = None, interval = 50, blit = True, xlim = 3., ylim = [0., 1.], auto_scroll = True):
+    def __init__(self, signal, title = None, xlabel = None, ylabel = None,
+    legend = None, interval = 50, blit = True, xlim = 3., ylim = [0., 1.],
+    autoscroll = True, autosize = True, keep_data = False):
         self.fig, self.ax = create_axes()
         self.signal = signal
         self.lines = []
-        self._data = np.sin(np.arange(0, 2 * math.pi, 1. / interval))
+        self._current_max, self._current_min = 0., 0.
         if title is not None:
             self.ax.set_title(title)
         if xlabel is not None:
@@ -133,15 +172,17 @@ class RealTimePlot(object):
         self.xlim = xlim
         self.ax.set_ylim(ylim)
         self.ax.set_xlim([0, xlim])
-        self.auto_scroll = auto_scroll
+        self.autoscroll = autoscroll
+        self.autosize = autosize
+        self.keep_Data = keep_data
         plt.legend()
         self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = blit)      
             
-    def _handle_auto_scroll(self, t):
+    def _handle_autoscroll(self, t):
         '''If autoscroll is specified, this function handles it. This should
         not be used by application code.'''
         logging.debug('Current time: %s', t)
-        if self.auto_scroll:
+        if self.autoscroll:
             logging.debug('Autoscrolling!!!')
             
             # numpy empty arrays have dimension 0!!!!
@@ -156,27 +197,36 @@ class RealTimePlot(object):
                 if t[-1] > self.xlim:    
                     self.ax.set_xlim([t[-1] - self.xlim, t[-1]])
             else:
-                logging.warn('Time vector is unknown: %s', t)
-                       
-                                        
+                logging.warn('Time vector is unknown type: %s', type(t))
+               
+    def _handle_autosize(self, t):
+        pass
+     
     def update(self, i):
         '''Gets called to redraw the plot. Should not be used by application
         code.'''
         logging.debug('Entering update callback')
-        for l in self.lines:
-            cx, cy = l.get_data()
-            logging.debug('Current line data: %s, %s', cx, cy)
-            x, y = self.signal.get_timeseries()
-            if x is not None and x is not None:
-                logging.debug('Signal time: %s', x)
-                l.set_data(np.append(cx, x), np.append(cy, y))
-                self._handle_auto_scroll(x)
+        if self.signal.has_data():
+            new_t, new_values = self.signal.get_timeseries()
+            self._handle_autoscroll(new_t)            
+            for line, new_value in zip(self.lines, new_values.T):                
+                current_t, current_values = line.get_data()
+                new_line_values = np.append(current_values, new_value)
+                new_line_values
+                line.set_data(np.append(current_t, new_t), new_line_values)
+            
+               
         self.ax.figure.canvas.draw()
         logging.debug('Leaving update callback')
         return self.lines
     
 if __name__ == '__main__':
-    s = Signal()
-    r = RealTimePlot(s, title = 'Title', xlabel = 'xlabel', ylabel = 'ylabel', legend = ['signal'], blit = False, interval = 100)
-    random_data(s, 0.)    
-    plt.show()
+    s = SerialSignal()
+    s.start()
+    while True:
+        try:
+            pass
+            #time.sleep(1.)
+        except KeyboardInterrupt:
+            s.stop()
+            break
