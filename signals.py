@@ -5,12 +5,15 @@ import logging
 import math
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib
 import time
 import serial
 import json
 
-logging.basicConfig(level = logging.DEBUG)
+matplotlib.use('TkAgg') # <-- THIS MAKES IT FAST!
 
+logging.basicConfig(level = logging.DEBUG)
+logging.getLogger().setLevel(logging.INFO)
 
 def create_axes(title = None, xlabel = None, ylabel = None, legend = None):
     fig = plt.figure()
@@ -49,16 +52,17 @@ def random_data(*args):
 class Signal(object):
 
     def __init__(self, data = None, on_new_data = None):
+        logging.info('Initializing Signal class')
         self.on_new_data = on_new_data
         self.buffer = np.array([])
         if data is not None:
             self.buffer = np.append(self.buffer, data)
-        
+
     def _new_data_callback(self, data):
         '''Callback when new data is added to the buffer'''
         if self.on_new_data:
             self.on_new_data(data)     
-                        
+         
     def add_data(self, data):
         '''Add @data vector to the buffer. Data is stacked vertically, so data
         has to be in form of row vectors, where the first element is the time
@@ -112,33 +116,39 @@ class Signal(object):
         else:
             logging.debug('Leaving get_timeseries: %s, %s', [], [])
             return None, None
-            
+
+        
 class SerialSignal(Signal):
 
-    def __init__(self, port = '/dev/ttyACM0', baudrate = 9600, timeout = 1., rate = 10.):
+    def __init__(self, labels, port = '/dev/ttyACM0', baudrate = 9600, timeout = 1., rate = 10.):
+        Signal.__init__(self)
         self.port = serial.Serial(port, baudrate, timeout = timeout)
         if not self.port.is_open:
             self.port.open()
         self._stop = True
         self.rate = rate
-        super(Signal, self).__init__()
-        
+        self.names = labels
+        self.now = time.time()
+            
     def _read_data(self):
         raw_data = self.port.readline()
         try:
-            data = json.loads(raw_data)
-            logging.debug('Json data: %s', data)
-            # TODO: how do we handle multiple sensors in data stream?????!!
-            # Do we want to loop over all sensor labels:
-            # Accelerometer, Temperature, etc.
-            # And if the label does not exist in the dict the data
-            # is ignored????
-    
+            json_data = json.loads(raw_data)
+            #logging.debug(data)
+            #for signal_name, signal in self._signals_dict.iteritems():
+            data = [json_data['time']]
+            for name in self.names:
+                if json_data.has_key(name):
+                    data.append(json_data[name])
+                else:
+                    data.append(0.)
+            self.add_data(np.array(data))
+            logging.info('Data: %s', data)
         except ValueError:
             logging.error('Could not read data!: %s', raw_data)
         if not self._stop:
             threading.Timer(self.rate / 1000., self._read_data).start()
-        
+
     def start(self):
         if not self.port.is_open:
             self.port.open()
@@ -148,17 +158,21 @@ class SerialSignal(Signal):
     def stop(self):
         self._stop = True
         self.port.close()
-
-
         
+    def get_names(self):
+        return self.names
+            
 class RealTimePlot(object):
 
-    def __init__(self, signal, title = None, xlabel = None, ylabel = None,
-    legend = None, interval = 50, blit = True, xlim = 3., ylim = [0., 1.],
+    def __init__(self, source, title = None, xlabel = None, ylabel = None,
+    interval = 60, blit = True, xlim = 3., ylim = [-2., 2.],
     autoscroll = True, autosize = True, keep_data = False):
         self.fig, self.ax = create_axes()
-        self.signal = signal
-        self.lines = []
+        self.source = source
+        # A source is a stream that has a data array linked to a label name.
+        # this is done to link json data obtained through serial port to
+        # data that will be plotted, so to avoid mixing values.
+        self.lines = [plt.plot([], [], lw = 1.5, label = n)[0] for n in self.source.get_names()]
         self._current_max, self._current_min = 0., 0.
         if title is not None:
             self.ax.set_title(title)
@@ -166,9 +180,6 @@ class RealTimePlot(object):
             self.ax.set_xlabel(xlabel)
         if ylabel is not None:
             self.ax.set_ylabel(ylabel)
-        if legend is not None:
-            for l in legend:
-                self.lines.append(self.ax.plot([], [], label = l)[0])
         self.xlim = xlim
         self.ax.set_ylim(ylim)
         self.ax.set_xlim([0, xlim])
@@ -176,7 +187,14 @@ class RealTimePlot(object):
         self.autosize = autosize
         self.keep_Data = keep_data
         plt.legend()
-        self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = blit)      
+        self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = blit)
+        #plt.ion()
+        plt.show()
+            
+            
+    def _init_plot(self):
+        pass
+        
             
     def _handle_autoscroll(self, t):
         '''If autoscroll is specified, this function handles it. This should
@@ -206,23 +224,27 @@ class RealTimePlot(object):
         '''Gets called to redraw the plot. Should not be used by application
         code.'''
         logging.debug('Entering update callback')
-        if self.signal.has_data():
-            new_t, new_values = self.signal.get_timeseries()
+        if self.source.has_data():
+            logging.debug('Signal has data!')
+            new_t, new_values = self.source.get_timeseries()
             self._handle_autoscroll(new_t)            
             for line, new_value in zip(self.lines, new_values.T):                
                 current_t, current_values = line.get_data()
                 new_line_values = np.append(current_values, new_value)
                 new_line_values
                 line.set_data(np.append(current_t, new_t), new_line_values)
-            
-               
-        self.ax.figure.canvas.draw()
+        else:
+            logging.warn('Real time plot update has no data!')
+        #self.fig.canvas.update()
+        #self.ax.figure.canvas.draw()
+        plt.ion()
         logging.debug('Leaving update callback')
         return self.lines
     
 if __name__ == '__main__':
-    s = SerialSignal()
+    s = SerialSignal(['x'], baudrate = 115200)
     s.start()
+    r = RealTimePlot(s)
     while True:
         try:
             pass
