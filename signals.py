@@ -9,11 +9,13 @@ import matplotlib
 import time
 import serial
 import json
+import sys
+from abc import ABCMeta, abstractmethod
 
 matplotlib.use('TkAgg') # <-- THIS MAKES IT FAST!
 
 logging.basicConfig(level = logging.DEBUG)
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.ERROR)
 
 def create_axes(title = None, xlabel = None, ylabel = None, legend = None):
     fig = plt.figure()
@@ -37,185 +39,173 @@ def create_axes(title = None, xlabel = None, ylabel = None, legend = None):
     ax.xaxis.grid(True, which = 'major')
     return fig, ax
   
-
-def random_data(*args):
-    logging.debug('Entering random_data callback')
-    signal, t = args
-    t += 0.02
-    data = np.array([t, np.random.random()])
-    logging.debug('%s, %s', data[0], data[1:])
-    signal.add_data(data)
-    logging.debug('signal buffer: %s', signal.buffer)
-    threading.Timer(0.1, random_data, (signal, t)).start()
-    logging.debug('Leaving random_data callback')
-
 class Signal(object):
 
-    def __init__(self, data = None, on_new_data = None):
-        logging.info('Initializing Signal class')
+    __metaclass__ = ABCMeta
+
+    def __init__(self, names, on_new_data = None, on_connect = None, on_disconnect = None, rate = 10.):
         self.on_new_data = on_new_data
-        self.buffer = np.array([])
-        if data is not None:
-            self.buffer = np.append(self.buffer, data)
+        self.on_connect = on_connect
+        self.on_disconnect = on_disconnect   
+        self.buffer = {name: [] for name in names}
+        self.rate = rate
+        self.names = names
+        self.is_connected = False
 
     def _new_data_callback(self, data):
-        '''Callback when new data is added to the buffer'''
         if self.on_new_data:
-            self.on_new_data(data)     
-         
-    def add_data(self, data):
-        '''Add @data vector to the buffer. Data is stacked vertically, so data
-        has to be in form of row vectors, where the first element is the time
-        vector'''
-        if self.buffer.size == 0:
-            # We append to the array if it's zero. vstack won't allow for stacking
-            # if arrays don't have the same dimentions.
-            logging.debug('Buffer empty. Apending: %s', data)
-            self.buffer = np.append(self.buffer, data)
+            self.on_new_data(data)
+            
+    def _stream(self):
+        raw_data = self._readline()
+        try:
+            json_data = json.loads(raw_data)
+            self.add_dict_data(json_data)
+            logging.debug('json: %s', json_data)
+        except ValueError:
+            logging.error('Could not read data: %s', raw_data)
+        threading.Timer(self.rate / 1000., self._stream).start()
+            
+    def start(self):
+        if self.is_connected:
+            self._stream()
+            if self.on_connect:
+                self.on_connect()
         else:
-            # There's data. We can try to stack now.
-            logging.debug('Buffer not empty. Stacking: %s', data)
-            self.buffer = np.vstack((self.buffer, data))
-        self._new_data_callback(data)
+            raise ValueError('Conection must be established first!')
+            
+    def stop(self):
+        self.disconnect()
+        if not self.is_connected:
+            if self.on_disconnect:
+                self.on_disconnect()
+        else:
+            raise ValueError('Connection could not be terminated!')
+    
+    @abstractmethod
+    def _readline(self, *params):
+        pass
+    
+    @abstractmethod 
+    def connect(self, *params):
+        pass
+        
+    @abstractmethod
+    def disconnect(self, *params):
+        pass
+    
+    def has_data(self, name):
+        if self.buffer.has_key(name):
+            return len(self.buffer[name])
+        else:
+            return -1
 
-    def has_data(self):
-        return self.buffer.size > 0
+         
+    def add_dict_data(self, data_dict):
+        for name, data in data_dict.iteritems():
+            self.add_data(name, data)
+        self._new_data_callback(data_dict)
 
-    def get_data(self, n = 0):
-        '''Returns @n amount of data. If n == 0, all data in the buffer is returned.
-        if n < 0, a ValueError exception is raised.'''
+    def add_data(self, name, data):
+        self.buffer[name].append(data)
+
+    def get_data(self, name, n = 0):
+        '''Returns @n amount of data in signal @name. If n == 0, all data in 
+        the buffer is returned. if n < 0, a ValueError exception is raised.'''
         if n == 0:
-            data = self.buffer
-            self.buffer = np.array([])
+            # Get copy of list. If data = self.buffer[name] gets a reference.
+            # When the values are cleared, the returned values get cleared
+            # as well.
+            data = self.buffer[name][:]
+            del self.buffer[name][:]
         elif n > 0:
-            data = self.buffer[:n]
-            self.buffer = np.delete(self.buffer, slice(0, n))
+            data = self.buffer[name][:n]
+            del self[name][:n]
         elif n < 0:
             data = None
             raise ValueError('Cannot get negative amounts of data')
-        logging.debug('get_data: %s', data)
         return data
-
-    def get_timeseries(self, n = 0):
-        '''Returns @n amount of data in form of a TimeSeries tuple, where the first
-        element of the tuple is the time vector. If @n == 0 all data is returned,
-        if n < 0 a ValueError exception is raised.'''
-        logging.debug('Entering get_timeseries.')
-        if self.has_data():
-            data = self.get_data(n)
-            logging.debug('Leaving get_timeseries: %s', data)
-            if data.ndim == 1:
-                logging.debug('Array is 1-D: %s', data)
-                # When the array only has one sample, it is stored as a 1-D array,
-                # thus, the cases when ndim != 1 are not valid and raise index error.
-                return data[0], data[1:]
-            else:
-                # Array is multidimensional.
-                logging.debug('Data: %s', data)
-                return data[:,0], data[:,1:]
-        else:
-            logging.debug('Leaving get_timeseries: %s, %s', [], [])
-            return None, None
-
         
+    def get_data_dict(self):
+        data = self.buffer
+        for name in self.buffer.iterkeys():
+            del data[name][:]
+
+
 class SerialSignal(Signal):
 
-    def __init__(self, labels, port = '/dev/ttyACM0', baudrate = 9600, timeout = 1., rate = 10.):
-        Signal.__init__(self)
-        self.port = serial.Serial(port, baudrate, timeout = timeout)
-        if not self.port.is_open:
-            self.port.open()
-        self._stop = True
-        self.rate = rate
-        self.names = labels
-        self.now = time.time()
-            
-    def _read_data(self):
-        raw_data = self.port.readline()
-        try:
-            json_data = json.loads(raw_data)
-            #logging.debug(data)
-            #for signal_name, signal in self._signals_dict.iteritems():
-            data = [json_data['time']]
-            for name in self.names:
-                if json_data.has_key(name):
-                    data.append(json_data[name])
-                else:
-                    data.append(0.)
-            self.add_data(np.array(data))
-            logging.info('Data: %s', data)
-        except ValueError:
-            logging.error('Could not read data!: %s', raw_data)
-        if not self._stop:
-            threading.Timer(self.rate / 1000., self._read_data).start()
+    def __init__(self, names, port = '/dev/ttyACM0', baudrate = 9600,
+    timeout = 1., rate = 10., on_new_data = None, on_connect = None,
+    on_disconnect = None):
+        Signal.__init__(self, names, on_new_data, on_connect, on_disconnect)
+        self.connect(port, baudrate, timeout)
 
-    def start(self):
+    def connect(self, *params):
+        if self.is_connected:
+            return
+        self.port = serial.Serial(params[0], params[1], timeout = params[2])
         if not self.port.is_open:
             self.port.open()
-        self._stop = False
-        self._read_data()
+        self.is_connected = self.port.is_open
         
-    def stop(self):
-        self._stop = True
+    def _readline(self):
+        return self.port.readline()
+    
+    def disconnect(self, *params):
+        if not self.is_connected:
+            return
         self.port.close()
+        self.is_connected = self.port.is_open
         
-    def get_names(self):
-        return self.names
-            
+        
 class RealTimePlot(object):
 
-    def __init__(self, source, title = None, xlabel = None, ylabel = None,
-    interval = 60, blit = True, xlim = 3., ylim = [-2., 2.],
+    def __init__(self, signal, legend = None, title = None, xlabel = None, ylabel = None,
+    interval = 60, blit = True, xlim = 300., ylim = [-2., 2.],
     autoscroll = True, autosize = True, keep_data = False):
         self.fig, self.ax = create_axes()
-        self.source = source
-        # A source is a stream that has a data array linked to a label name.
-        # this is done to link json data obtained through serial port to
-        # data that will be plotted, so to avoid mixing values.
-        self.lines = [plt.plot([], [], lw = 1.5, label = n)[0] for n in self.source.get_names()]
-        self._current_max, self._current_min = 0., 0.
         if title is not None:
             self.ax.set_title(title)
         if xlabel is not None:
             self.ax.set_xlabel(xlabel)
         if ylabel is not None:
             self.ax.set_ylabel(ylabel)
+        if legend == None:
+            legend = signal.names
+        self.lines = [plt.plot([0.], [0.], label = label)[0] for label in legend]
         self.xlim = xlim
         self.ax.set_ylim(ylim)
         self.ax.set_xlim([0, xlim])
         self.autoscroll = autoscroll
         self.autosize = autosize
-        self.keep_Data = keep_data
-        plt.legend()
+        self.signal = signal
+        self.keep_data = keep_data
         self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = blit)
-        #plt.ion()
+        plt.legend()
         plt.show()
-            
-            
-    def _init_plot(self):
+        
+    def _discard_data(self):
         pass
         
+    def _init_plot(self):
+        pass
             
     def _handle_autoscroll(self, t):
         '''If autoscroll is specified, this function handles it. This should
         not be used by application code.'''
-        logging.debug('Current time: %s', t)
         if self.autoscroll:
-            logging.debug('Autoscrolling!!!')
-            
             # numpy empty arrays have dimension 0!!!!
             # so we have to use size to take care of this.
             # Empty arrays have size 0.
             if t.ndim == 0 and t.size != 0:
-                logging.debug('Time is scalar: %s', t)
+                logging.error('%s', t.ndim)
                 if t > self.xlim:
                     self.ax.set_xlim([t - self.xlim, t])
             elif t.ndim > 0:
-                logging.debug('Time is vector: %s', t)
                 if t[-1] > self.xlim:    
                     self.ax.set_xlim([t[-1] - self.xlim, t[-1]])
             else:
-                logging.warn('Time vector is unknown type: %s', type(t))
+                logging.error('Time vector is unknown type: %s', type(t))
                
     def _handle_autosize(self, t):
         pass
@@ -223,32 +213,26 @@ class RealTimePlot(object):
     def update(self, i):
         '''Gets called to redraw the plot. Should not be used by application
         code.'''
-        logging.debug('Entering update callback')
-        if self.source.has_data():
-            logging.debug('Signal has data!')
-            new_t, new_values = self.source.get_timeseries()
-            self._handle_autoscroll(new_t)            
-            for line, new_value in zip(self.lines, new_values.T):                
-                current_t, current_values = line.get_data()
-                new_line_values = np.append(current_values, new_value)
-                new_line_values
-                line.set_data(np.append(current_t, new_t), new_line_values)
-        else:
-            logging.warn('Real time plot update has no data!')
+        idx = 0
+        for name, line in zip(self.signal.names, self.lines):
+            if self.signal.has_data(name) > 0:
+                _, ly = line.get_data()
+                ly = np.append(ly, self.signal.get_data(name))
+                lx = np.arange(ly.size)
+                line.set_data(lx, ly)
+                idx = max(idx, lx[-1])
+            else:
+                pass
+        self._handle_autoscroll(idx)
         #self.fig.canvas.update()
         #self.ax.figure.canvas.draw()
-        plt.ion()
-        logging.debug('Leaving update callback')
         return self.lines
     
 if __name__ == '__main__':
-    s = SerialSignal(['x'], baudrate = 115200)
-    s.start()
-    r = RealTimePlot(s)
-    while True:
-        try:
-            pass
-            #time.sleep(1.)
-        except KeyboardInterrupt:
-            s.stop()
-            break
+    stream = SerialSignal(['x', 'y', 'z'], baudrate = 115200)
+    stream.start()
+    r = RealTimePlot(stream)
+
+
+
+
