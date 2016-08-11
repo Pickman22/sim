@@ -12,10 +12,7 @@ import json
 import sys
 from abc import ABCMeta, abstractmethod
 
-matplotlib.use('TkAgg') # <-- THIS MAKES IT FAST!
-
-logging.basicConfig(level = logging.DEBUG)
-logging.getLogger().setLevel(logging.ERROR)
+logging.getLogger().setLevel(logging.INFO)
 
 def create_axes(title = None, xlabel = None, ylabel = None, legend = None):
     '''Create a figure with modified parameters so that it looks more
@@ -229,7 +226,7 @@ class RealTimePlot(object):
     is animated.'''
 
     def __init__(self, signal, legend = None, title = None, xlabel = None, ylabel = None,
-    interval = 60, blit = True, xlim = 300., ylim = [-2., 2.], keep_data = 300,
+    interval = 60, xlim = 300., ylim = [-2., 2.], keep_data = 300,
     autoscroll = True, autosize = True):
         '''@signal is the object that holds data. @legend for the figure. @title for figure.
         @xlabel for figure. @ylabel for figure. @interval at which animation is updated.
@@ -245,12 +242,14 @@ class RealTimePlot(object):
         if legend == None:
             legend = signal.names
         self.lines = [plt.plot([], [], label = label, animated = True)[0] for label in legend]
-        self.ax.set_ylim(ylim)
+        self._ylim = self.ax.get_ylim()
         self.ax.set_xlim([0, xlim])
         self.autoscroll = autoscroll
         self.signal = signal
         self.keep_data = keep_data
-        self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = blit)
+        # Do not turn off blit or this will break! For blit to be off and for this to work, the Line2D
+        # objects must be added directly to the axes object. This might be a bug in matplotlib?
+        self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = True)
         self.keep_data = keep_data
         self._xdata = np.arange(keep_data)
         plt.legend()
@@ -268,6 +267,13 @@ class RealTimePlot(object):
     def update(self, i):
         '''Gets called to redraw the plot. Should not be used by application
         code.'''
+        self.ax.relim()
+        self.ax.autoscale_view()
+        if self.ax.get_ylim() != self._ylim:
+            # Plot has autoscaled. Save current ylim to detect updates
+            # and request plot to be updated so ticks are shown properly.
+            self._ylim = self.ax.get_ylim()
+            self.fig.canvas.draw()
         for name, line in zip(self.signal.names, self.lines):
             if self.signal.has_data(name) > 0:
                 _, ly = line.get_data()
