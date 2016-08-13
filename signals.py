@@ -11,8 +11,10 @@ import serial
 import json
 import sys
 from abc import ABCMeta, abstractmethod
+import argparse
 
-logging.getLogger().setLevel(logging.INFO)
+logging.basicConfig(level = logging.DEBUG)
+logging.getLogger().setLevel(logging.ERROR)
 
 def create_axes(title = None, xlabel = None, ylabel = None, legend = None):
     '''Create a figure with modified parameters so that it looks more
@@ -83,6 +85,7 @@ class Signal(object):
         self.is_connected = False
         self.is_streaming = False
         self.keep_data = keep_data
+        self.lock = threading.Lock()
 
     def _new_data_callback(self, data):
         '''Callback that fires when @data is received.'''
@@ -90,14 +93,19 @@ class Signal(object):
             self.on_new_data(data)
 
     def _stream(self):    
-        '''Called periodically to poll for new data from communication channel.'''            
-        raw_data = self._readline()
+        '''Called periodically to poll for new data from communication channel.'''
+        if self.is_connected:
+            raw_data = self._readline()
+        else:
+            logging.warn('Trying to read from a disconnected port!')
+            return
         try:
             json_data = json.loads(raw_data)
             self.add_dict_data(json_data)
             logging.debug('json: %s', json_data)
         except ValueError:
-            logging.error('Could not read data: %s', raw_data)
+            pass
+            #logging.error('Could not read data: %s', raw_data)
         if self.is_connected:
             threading.Timer(self.rate / 1000., self._stream).start()
         else:
@@ -190,7 +198,7 @@ class Signal(object):
 class SerialSignal(Signal):
 
     def __init__(self, names, port = '/dev/ttyACM0', baudrate = 9600,
-    timeout = 1., rate = 10., on_new_data = None, on_connect = None,
+    timeout = 0, rate = 10., on_new_data = None, on_connect = None,
     on_disconnect = None):
         '''@names specifies the labels of the signals expected from the serial
         port. @port is the name of the port, @baudrate is the connection's
@@ -211,13 +219,18 @@ class SerialSignal(Signal):
         
     def _readline(self):
         '''Read a line of data.'''
-        return self.port.readline()
+        self.lock.acquire()
+        ln = self.port.readline()
+        self.lock.release()
+        return ln
     
     def disconnect(self, *params):
         '''Attempt disconnection using @params.'''
         if not self.is_connected:
             return
+        self.lock.acquire()
         self.port.close()
+        self.lock.release()
         self.is_connected = self.port.is_open
         
         
@@ -227,7 +240,7 @@ class RealTimePlot(object):
 
     def __init__(self, signal, legend = None, title = None, xlabel = None, ylabel = None,
     interval = 60, xlim = 300., ylim = [-2., 2.], keep_data = 300,
-    autoscroll = True, autosize = True):
+    autoscroll = True, autosize = True, ts = None):
         '''@signal is the object that holds data. @legend for the figure. @title for figure.
         @xlabel for figure. @ylabel for figure. @interval at which animation is updated.
         @blit for faster animation. @xlim x-axis limits. @ylim y-axis limits. @keep_data
@@ -243,17 +256,21 @@ class RealTimePlot(object):
             legend = signal.names
         self.lines = [plt.plot([], [], label = label, animated = True)[0] for label in legend]
         self._ylim = self.ax.get_ylim()
-        self.ax.set_xlim([0, xlim])
+        self._xdata = np.arange(keep_data)
+        if ts is not None:
+            self._xdata = ts * self._xdata
+        self.ax.set_xlim([self._xdata[0], self._xdata[-1]])
+        #self.ax.set_ylim(ylim)
         self.autoscroll = autoscroll
         self.signal = signal
         self.keep_data = keep_data
+        self.autosize = autosize
         # Do not turn off blit or this will break! For blit to be off and for this to work, the Line2D
         # objects must be added directly to the axes object. This might be a bug in matplotlib?
-        self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = True)
+        self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = True, frames = 500)
         self.keep_data = keep_data
-        self._xdata = np.arange(keep_data)
         plt.legend()
-        plt.show()
+        #plt.show()
         
     def _init_plot(self):
         pass
@@ -267,13 +284,14 @@ class RealTimePlot(object):
     def update(self, i):
         '''Gets called to redraw the plot. Should not be used by application
         code.'''
-        self.ax.relim()
-        self.ax.autoscale_view()
-        if self.ax.get_ylim() != self._ylim:
-            # Plot has autoscaled. Save current ylim to detect updates
-            # and request plot to be updated so ticks are shown properly.
-            self._ylim = self.ax.get_ylim()
-            self.fig.canvas.draw()
+        if self.autosize:
+            self.ax.relim()
+            self.ax.autoscale_view()
+            if self.ax.get_ylim() != self._ylim:
+                # Plot has autoscaled. Save current ylim to detect updates
+                # and request plot to be updated so ticks are shown properly.
+                self._ylim = self.ax.get_ylim()
+                self.fig.canvas.draw()
         for name, line in zip(self.signal.names, self.lines):
             if self.signal.has_data(name) > 0:
                 _, ly = line.get_data()
@@ -285,6 +303,26 @@ class RealTimePlot(object):
         return self.lines
     
 if __name__ == '__main__':
-    stream = SerialSignal(['x', 'y', 'z'], baudrate = 115200)
+
+    parser = argparse.ArgumentParser(description = 'Serial Port Monitor', )
+    parser.add_argument('-p', '--port', action = 'store', dest = 'port', default = '/dev/ttyACM0')
+    parser.add_argument('-b', '--baudrate', action = 'store', dest = 'baudrate', default = 115200, type = int)
+    parser.add_argument('-n', '--names', action='append', dest='names', default=[], help='Signal labels')
+    args = parser.parse_args()
+
+    stream = SerialSignal(args.names, port = args.port, baudrate = args.baudrate)
     stream.start()
-    r = RealTimePlot(stream, xlim = 300., keep_data = 300)
+    r = RealTimePlot(stream, xlim = 300., keep_data = 300, ts = 0.01, ylim = (-2, 2))
+    #r.animation.save('basic_animation.mp4', fps=30, extra_args=['-vcodec', 'libx264'])
+    plt.show(block = False)
+    print '####################################################################'
+    print '######################### El Robotista #############################'
+    print '####################################################################'
+    print '### Plot signals recieved through Serial Port in real time. V1.0 ###'
+    print '####################################################################'
+    while True:
+        print 'Hit Q to exit.'
+        if raw_input('> ') == 'q':
+            break
+    print 'Bye.'
+    stream.stop()
