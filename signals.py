@@ -245,8 +245,8 @@ class RealTimePlot(object):
     is animated.'''
 
     def __init__(self, signal, legend = None, title = None, xlabel = None, ylabel = None,
-    interval = 60, xlim = 300., ylim = [-2., 2.], keep_data = 300,
-    autoscroll = True, autosize = True, ts = None):
+    interval = 60, xlim = 300., ylim = [-2., 2.], keep_data = 300, 
+    autoscroll = True, autoscale = True, ts = None):
         '''@signal is the object that holds data. @legend for the figure. @title for figure.
         @xlabel for figure. @ylabel for figure. @interval at which animation is updated.
         @blit for faster animation. @xlim x-axis limits. @ylim y-axis limits. @keep_data
@@ -270,13 +270,14 @@ class RealTimePlot(object):
         self.autoscroll = autoscroll
         self.signal = signal
         self.keep_data = keep_data
-        self.autosize = autosize
+        self.autoscale = autoscale
+        if not self.autoscale:
+            self.ax.set_ylim(ylim)
         # Do not turn off blit or this will break! For blit to be off and for this to work, the Line2D
         # objects must be added directly to the axes object. This might be a bug in matplotlib?
         self.animation = animation.FuncAnimation(self.fig, self.update, interval = interval, blit = True, frames = 500)
         self.keep_data = keep_data
         plt.legend()
-        #plt.show()
         
     def _init_plot(self):
         pass
@@ -286,11 +287,14 @@ class RealTimePlot(object):
                
     def _handle_autosize(self, t):
         pass
+        
+    def show(self):
+        plt.show(block = False)
 
     def update(self, i):
         '''Gets called to redraw the plot. Should not be used by application
         code.'''
-        if self.autosize:
+        if self.autoscale:
             self.ax.relim()
             self.ax.autoscale_view()
             if self.ax.get_ylim() != self._ylim:
