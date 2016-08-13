@@ -138,13 +138,8 @@ class Signal(Buffer):
 
     def _stream(self):    
         '''Called periodically to poll for new data from communication channel.'''
-<<<<<<< HEAD
-        if self.is_connected:
-            self.lock.acquire()
-=======
         self.lock.acquire()
         if self.is_connected():
->>>>>>> queues
             raw_data = self._readline()
             self.lock.release()
         else:
@@ -175,14 +170,8 @@ class Signal(Buffer):
             
     def stop(self):
         '''Stop and close connection.'''
-        self.lock.acquire()
         self.disconnect()
-<<<<<<< HEAD
-        self.lock.release()
-        if not self.is_connected:
-=======
         if not self.is_connected():
->>>>>>> queues
             if self.on_disconnect:
                 self.on_disconnect()
         else:
@@ -236,27 +225,17 @@ class SerialSignal(Signal):
     def _readline(self):
         '''Read a line of data.'''
         return self.port.readline()
-<<<<<<< HEAD
-=======
     
     def is_connected(self, *params):
         return self.port.is_open
->>>>>>> queues
     
     def disconnect(self, *params):
         '''Attempt disconnection using @params.'''
         if not self.is_connected():
             return
-<<<<<<< HEAD
-        self.port.close()
-        self.is_connected = self.port.is_open
-=======
-        logging.error('Disconnect Lock')
         self.lock.acquire()
         self.port.close()
         self.lock.release()
-        logging.error('Disconnect Release')
->>>>>>> queues
         
         
 class RealTimePlot(object):
