@@ -95,7 +95,9 @@ class Signal(object):
     def _stream(self):    
         '''Called periodically to poll for new data from communication channel.'''
         if self.is_connected:
+            self.lock.acquire()
             raw_data = self._readline()
+            self.lock.release()
         else:
             logging.warn('Trying to read from a disconnected port!')
             return
@@ -123,13 +125,15 @@ class Signal(object):
             
     def stop(self):
         '''Stop and close connection.'''
+        self.lock.acquire()
         self.disconnect()
+        self.lock.release()
         if not self.is_connected:
             if self.on_disconnect:
                 self.on_disconnect()
         else:
             raise ValueError('Connection could not be terminated!')
-    
+            
     @abstractmethod
     def _readline(self, *params):
         '''Implement how a data line (string terminated with \n) is read.
@@ -219,18 +223,13 @@ class SerialSignal(Signal):
         
     def _readline(self):
         '''Read a line of data.'''
-        self.lock.acquire()
-        ln = self.port.readline()
-        self.lock.release()
-        return ln
+        return self.port.readline()
     
     def disconnect(self, *params):
         '''Attempt disconnection using @params.'''
         if not self.is_connected:
             return
-        self.lock.acquire()
         self.port.close()
-        self.lock.release()
         self.is_connected = self.port.is_open
         
         
