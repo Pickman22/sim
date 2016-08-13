@@ -11,6 +11,7 @@ import serial
 import json
 import sys
 from abc import ABCMeta, abstractmethod
+from Queue import Queue
 import argparse
 
 logging.basicConfig(level = logging.DEBUG)
@@ -60,12 +61,65 @@ def remove_from_ndarray(data, keep_data):
     else:
         logging.debug('Removing %s from ndarray', n)
         return np.delete(data, slice(0, n))
+        
+class Buffer(object):
+
+    def __init__(self, names, on_new_data = None, keep_data = 300):
+        self.on_new_data = on_new_data
+        self.keep_data = keep_data
+        self.names = names
+        self.buffer = {name: Queue() for name in names}
+        
+    def _new_data_callback(self, *params):
+        pass
+
+    def has_data(self, name):
+        '''Determine if buffer with @name has data stored. Returns the length of
+        the list that hols data if there is. Returns 0 if there is no data. 
+        Returns -1 if there is no buffer that matches @name.'''
+        if self.buffer.has_key(name):
+            return self.buffer[name].qsize()
+        else:
+            return -1
+
+    def add_dict_data(self, data_dict):
+        '''Add data to every buffer using @data_dict dictionary.''' 
+        for name, data in data_dict.iteritems():
+            self.add_data(name, data)
+
+    def add_data(self, name, data):
+        '''Add @data to the buffer with key that matches @name.'''
+        if not self.buffer.has_key(name):
+            return
+        if not self.buffer[name].full():
+            self.buffer[name].put(data)
+        else:
+            logging.warn('Queue %s is full!', name)        
+
+    def get_data(self, name, n = 0):
+        '''Returns @n amount of data in signal @name. If n == 0, all data in 
+        the buffer is returned. if n < 0, a ValueError exception is raised.'''
+        if n == 0:
+            # Get copy of list. If data = self.buffer[name] gets a reference.
+            # When the values are cleared, the returned values get cleared
+            # as well.
+            data = []
+            while not self.buffer[name].empty():
+                data.append(self.buffer[name].get())            
+        elif n > 0:
+            while n > 0 and not self.buffer[name].empty():
+                data.append(self.buffer[name].get())
+                n -= 1
+        elif n < 0:
+            data = None
+            raise ValueError('Cannot get negative amounts of data')
+        return data 
   
-class Signal(object):
+  
+class Signal(Buffer):
     '''Defines the interface for Signal. This class specifies how data is
     stored, deleted and passed on to a RealTimePlot object for visulization'''
     __metaclass__ = ABCMeta
-
 
     def __init__(self, names, on_new_data = None, on_connect = None,
     on_disconnect = None, rate = 10., keep_data = 300):
@@ -75,38 +129,31 @@ class Signal(object):
         is established. @on_discconect fires when the channel closes. @rate
         specfies the interval at which the channel will be polled for data.
         @keep_data specifies that amount of data that will be buffered.'''
-
-        self.on_new_data = on_new_data
+        Buffer.__init__(self, names, on_new_data, keep_data)
         self.on_connect = on_connect
         self.on_disconnect = on_disconnect   
-        self.buffer = {name: [] for name in names}
         self.rate = rate
-        self.names = names
-        self.is_connected = False
         self.is_streaming = False
-        self.keep_data = keep_data
         self.lock = threading.Lock()
-
-    def _new_data_callback(self, data):
-        '''Callback that fires when @data is received.'''
-        if self.on_new_data:
-            self.on_new_data(data)
 
     def _stream(self):    
         '''Called periodically to poll for new data from communication channel.'''
-        if self.is_connected:
+        self.lock.acquire()
+        if self.is_connected():
             raw_data = self._readline()
+            self.lock.release()
         else:
             logging.warn('Trying to read from a disconnected port!')
+            self.lock.release()
             return
         try:
             json_data = json.loads(raw_data)
-            self.add_dict_data(json_data)
             logging.debug('json: %s', json_data)
+            self.add_dict_data(json_data)
         except ValueError:
             pass
             #logging.error('Could not read data: %s', raw_data)
-        if self.is_connected:
+        if self.is_connected():
             threading.Timer(self.rate / 1000., self._stream).start()
         else:
             logging.warn('Not streaming anymore!')
@@ -114,7 +161,7 @@ class Signal(object):
     def start(self):            
         '''Connect and start receiving data.'''
         self.connect()
-        if self.is_connected:
+        if self.is_connected():
             self._stream()
             if self.on_connect:
                 self.on_connect()
@@ -124,7 +171,7 @@ class Signal(object):
     def stop(self):
         '''Stop and close connection.'''
         self.disconnect()
-        if not self.is_connected:
+        if not self.is_connected():
             if self.on_disconnect:
                 self.on_disconnect()
         else:
@@ -147,53 +194,11 @@ class Signal(object):
         '''Implements how to disconnect from channel. @params are parameters needed
         to disconnect.'''
         pass
-
-    def has_data(self, name):
-        '''Determine if buffer with @name has data stored. Returns the length of
-        the list that hols data if there is. Returns 0 if there is no data. 
-        Returns -1 if there is no buffer that matches @name.'''
-        if self.buffer.has_key(name):
-            return len(self.buffer[name])
-        else:
-            return -1
-
-    def add_dict_data(self, data_dict):
-        '''Add data to every buffer using @data_dict dictionary.''' 
-        for name, data in data_dict.iteritems():
-            self.add_data(name, data)
-        self._new_data_callback(data_dict)
-
-    def add_data(self, name, data):
-        '''Add @data to the buffer with key that matches @name.'''
-        if not self.buffer.has_key(name):
-            return
-        self.buffer[name].append(data)
-        if len(self.buffer[name]) > self.keep_data:
-            remove_from_list(self.buffer[name], self.keep_data)
-
-    def get_data(self, name, n = 0):
-        '''Returns @n amount of data in signal @name. If n == 0, all data in 
-        the buffer is returned. if n < 0, a ValueError exception is raised.'''
-        if n == 0:
-            # Get copy of list. If data = self.buffer[name] gets a reference.
-            # When the values are cleared, the returned values get cleared
-            # as well.
-            data = self.buffer[name][:]
-            del self.buffer[name][:]
-        elif n > 0:
-            data = self.buffer[name][:n]
-            del self[name][:n]
-        elif n < 0:
-            data = None
-            raise ValueError('Cannot get negative amounts of data')
-        return data
         
-    def get_data_dict(self):
-        '''Returns all data in form of a dictionary.'''
-        data = copy.deepcopy(self.buffer)
-        for name in self.buffer.iterkeys():
-            del data[name][:]
-
+    @abstractmethod
+    def is_connected(self, *params):
+        pass
+    
 
 class SerialSignal(Signal):
 
@@ -211,27 +216,28 @@ class SerialSignal(Signal):
 
     def connect(self, *params):
         '''Attempt connection with @params.'''
-        if self.is_connected:
+        if self.is_connected():
             return
         if not self.port.is_open:
+            self.port.flushInput()
             self.port.open()
-        self.is_connected = self.port.is_open
         
     def _readline(self):
         '''Read a line of data.'''
-        self.lock.acquire()
-        ln = self.port.readline()
-        self.lock.release()
-        return ln
+        return self.port.readline()
+    
+    def is_connected(self, *params):
+        return self.port.is_open
     
     def disconnect(self, *params):
         '''Attempt disconnection using @params.'''
-        if not self.is_connected:
+        if not self.is_connected():
             return
+        logging.error('Disconnect Lock')
         self.lock.acquire()
         self.port.close()
         self.lock.release()
-        self.is_connected = self.port.is_open
+        logging.error('Disconnect Release')
         
         
 class RealTimePlot(object):
