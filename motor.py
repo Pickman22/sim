@@ -31,57 +31,31 @@ def step(dx, x, ts):
 
 class DCMotor(object):
 
-    __default_params = {
-        'R' :  1., # Resistance.
-        'L' :  1., # Inductance.
-        'Kt':  1., # Torque Constant.
-        'J' :  1., # Inertia.
-        'Kb':  1., # Back-emf Constant.
-        'Kf':  1.,  # Friction Coefficient.
-    }
-    
-    __default_x0 = {
-        'position' :0.,
-        'velocity' :0.,
-        'current'  :0.
-    }
-
-
-    def __init__(self, **kwargs):
-        self.params = copy.deepcopy(self.__default_params)
-        x0 = copy.deepcopy(self.__default_x0)
-        try:
-            self.params.update(kwargs['params'])
-            logging.debug('Motor params: %s', self.params)
-        except Exception as e:
-            logging.info('%s. Using default parameters', e.message)
-
-        for k, v in self.params.iteritems():
-            if v < 0.:
-                raise ValueError('Motor parameter %s must be positive. Setting to one.', k);
-                self.params[k] = 1.
-        
+    def __init__(self, ts = 0.02, Kf = 1., Kb = 1., R = 1., L = 1., Kt = 1., 
+    J = 1., x0 = [0., 0., 0.]):
         self.x = np.zeros([3, 1])
-        
         self.A = np.array([
-            [0.,    1.,                                         0.                                  ], 
-            [0.,    -self.params['Kb'] / self.params['J'],      self.params['Kt'] / self.params['J']], 
-            [0.,    -self.params['Kt'] / self.params['L'],      -self.params['R'] / self.params['L']]
+            [0.,          1.,       0.], 
+            [0.,    -Kf / J ,  Kt / J ], 
+            [0.,    -Kb / L , -R  / L ]
         ])
-        
         self.B = np.array([
             [0.], 
             [0.], 
-            [1. / self.params['L']]
+            [1. / L]
         ])
-        self.x[0] = x0['position']
-        self.x[1] = x0['velocity']
-        self.x[2] = x0['current']
+        self.x = np.array(x0).reshape(3, 1)
+        self.u = 0.
+        self.ts = ts
         logging.debug('A:\n\r%s', self.A)
         logging.debug('B:\n\r%s', self.B)
         self.dim = self.x.size
     
-    def step(self, ts, u = 0.):
+    def step(self, ts = None, u = None):
+        if u is not None:
+            self.u = u
+        if ts is not None:
+            self.ts = ts
         dx = self.dynamics(u)
         self.x = step(dx, self.x, ts)
         return self.x
