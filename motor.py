@@ -5,18 +5,22 @@ import matplotlib.pyplot as plt
 
 logging.basicConfig(level = logging.DEBUG)
 
-def motor_sim(m, t0, tf, ts, on_input = None):
+def motor_sim(m, t0, tf, ts, on_input = None, plot = True):
     tlen = (tf - t0) /ts
     t = t0
     x = m.x
     u = 100.
     while t < tf:
         if on_input is not None:
-            u = on_input(x, t)
+            u = on_input(x[:, -1], t)
         m.step(ts, u)
         x = np.hstack((x, m.x))
         t += ts
     t = np.linspace(t0, tf, x.shape[1])
+    if plot:
+        plt.plot(t, x[1,:].T)
+        #plt.legend(['Position', 'Velocity', 'Current'], loc = 'best')
+        plt.show()
     return t, x.T
 
 def step(dx, x, ts):
@@ -56,7 +60,7 @@ class DCMotor(object):
             self.u = u
         if ts is not None:
             self.ts = ts
-        dx = self.dynamics(u)
+        dx = self.dynamics(self.u)
         self.x = step(dx, self.x, ts)
         return self.x
     
@@ -67,7 +71,7 @@ class DCMotor(object):
             self.x.reshape([3, 1])
             return self.A.dot(self.x) + u * self.B
         except:
-            raise ValueError('System dimension mismatch')
+            raise ValueError('System dynamics dimension mismatch')
             return np.zeros([3, 1])
         
 if __name__ == '__main__':
