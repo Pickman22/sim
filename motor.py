@@ -4,7 +4,8 @@ import logging
 import matplotlib.pyplot as plt
 from utils import step, create_axes
 
-logging.basicConfig(level = logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+
 
 def motor_sim(m, t0, tf, ts, *args, **kwargs):
     on_input = kwargs.get('on_input', None)
@@ -23,19 +24,20 @@ def motor_sim(m, t0, tf, ts, *args, **kwargs):
     t = np.linspace(t0, tf, x.shape[1])
     return t, x.T, vin
 
+
 class DCMotor(object):
 
-    def __init__(self, ts, R = 1., L = 1., J = 1., Kt = 1., Kb = 1., Kf = 1., 
-    x0 = [0., 0., 0.]):
+    def __init__(self, ts, R=1., L=1., J=1., Kt=1., Kb=1., Kf=1.,
+                 x0=[0., 0., 0.], enc_ppr=0):
         self.x = np.zeros([3, 1])
         self.A = np.array([
-            [0.,          1.,       0.], 
-            [0.,    -Kf / J ,  Kt / J ], 
-            [0.,    -Kb / L , -R  / L ]
+            [0.,          1.,     0.],
+            [0.,    -Kf / J,  Kt / J],
+            [0.,    -Kb / L,  -R / L]
         ])
         self.B = np.array([
-            [0.], 
-            [0.], 
+            [0.],
+            [0.],
             [1. / L]
         ])
         self.x = np.array(x0).reshape(3, 1)
@@ -43,15 +45,16 @@ class DCMotor(object):
         self.ts = ts
         logging.debug('A:\n\r%s', self.A)
         logging.debug('B:\n\r%s', self.B)
+        self.enc_ppr = enc_ppr
         self.dim = self.x.size
-    
-    def step(self, u = None):
+
+    def step(self, u=None):
         if u is not None:
             self.u = u
         dx = self.dynamics(self.u)
         self.x = step(dx, self.x, self.ts)
         return self.x
-    
+
     def dynamics(self, u):
         try:
             self.A.reshape([3, 3])
@@ -61,24 +64,26 @@ class DCMotor(object):
         except:
             raise ValueError('System dynamics dimension mismatch')
             return np.zeros([3, 1])
-        
+
+    def encoder_pos(self):
+        pulses = int(self.enc_ppr * self.x[0] / (2 * np.pi))
+        return 2 * np.pi * pulses / self.enc_ppr
+
 if __name__ == '__main__':
 
     ti = 0.
     tf = 3.
     ts = 0.002
-    
-    params = {
-        'kf': 0.1, # Friction Coefficient.
-        'kb': 0.01, # Back-emf Coefficient.
-        'L': 0.5, # Armature Inductance.
-        'R': 0.1, # Resistance.
-        'J': 0.01, # Rotor Inertia.
-        'kt': 0.01, # Torque Constant.
-    }
-    
-    m = DCMotor(params)
-    t, x = motor_sim(m, ti, tf, ts, plot = False, input = 24.)
+
+    Kf = 0.1  # Friction Coefficient.
+    Kb = 0.01  # Back-emf Coefficient.
+    L = 0.5  # Armature Inductance.
+    R = 0.1  # Resistance.
+    J = 0.01  # Rotor Inertia.
+    Kt = 0.01  # Torque Constant.
+
+    m = DCMotor(ts, R, L, J, Kt, Kb, Kf)
+    t, x, v = motor_sim(m, ti, tf, ts, plot=False, input=24.)
     plt.plot(t, x)
-    plt.legend(['position', 'veloctiy', 'current'], loc = 'best')
+    plt.legend(['position', 'veloctiy', 'current'], loc='best')
     plt.show()
