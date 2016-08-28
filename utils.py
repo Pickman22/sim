@@ -1,4 +1,9 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger().setLevel(logging.ERROR)
 
 
 def create_axes(title=None, xlabel=None, ylabel=None, legend=None):
@@ -39,3 +44,24 @@ def step(dx, x, ts):
     except:
         raise ValueError('System dimension mismatch')
         return np.zeros(x.shape)
+
+
+def remove_from_list(data, keep_data):
+    '''Remove elements from list @data so that the length matches @keep_data'''
+    n = len(data) - keep_data
+    if n <= 0:
+        return data
+    else:
+        logging.debug('Removing %s from list', n)
+        return data[:n]
+
+
+def remove_from_ndarray(data, keep_data):
+    '''Remove elements from @data ndarray so that the length matches @keep_data
+    '''
+    n = data.size - keep_data
+    if n <= 0:
+        return data
+    else:
+        logging.debug('Removing %s from ndarray', n)
+    return np.delete(data, slice(0, n))

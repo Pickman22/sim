@@ -15,56 +15,10 @@ from Queue import Queue
 import time
 from motor import motor
 from controller import controller
+import utils
 
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger().setLevel(logging.ERROR)
-
-
-def create_axes(title=None, xlabel=None, ylabel=None, legend=None):
-    '''Create a figure with modified parameters so that it looks more
-    aesthetic. @title is the figure's title, @xlabel is the x-axis' label,
-    @ylabel, the y-axis' label and @legend holds the lines labels.'''
-    fig = plt.figure()
-    ax = plt.gca()
-    if title:
-        ax.set_title(title)
-    if xlabel:
-        ax.set_xlabel(xlabel)
-    if ylabel:
-        ax.set_ylabel(ylabel)
-    if legend:
-        ax.legend(legend, loc='best', frameon=False)
-    ax.spines['bottom'].set_linewidth(2)
-    ax.spines['left'].set_linewidth(2)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.xaxis.set_ticks_position('bottom')
-    ax.yaxis.set_ticks_position('left')
-    ax.tick_params(labelsize=14)
-    ax.yaxis.grid(True, which='major')
-    ax.xaxis.grid(True, which='major')
-    return fig, ax
-
-
-def remove_from_list(data, keep_data):
-    '''Remove elements from list @data so that the length matches @keep_data'''
-    n = len(data) - keep_data
-    if n <= 0:
-        return data
-    else:
-        logging.debug('Removing %s from list', n)
-        return data[:n]
-
-
-def remove_from_ndarray(data, keep_data):
-    '''Remove elements from @data ndarray so that the length matches @keep_data
-    '''
-    n = data.size - keep_data
-    if n <= 0:
-        return data
-    else:
-        logging.debug('Removing %s from ndarray', n)
-        return np.delete(data, slice(0, n))
 
 
 class Buffer(object):
@@ -244,6 +198,54 @@ class SerialSignal(Signal):
         self.lock.release()
 
 
+class SystemSimulation(Buffer):
+    '''This is a simple class to define a dynamic system simulation. It stores
+    data that is computed every simulation cycle such that a RealTimePlot object
+    can animate it. Any simulation can be created deriving from this class, and
+    overriding the loop method, where the simulation is computed. Addiotionally
+    the init function can be override to initialize elements if needed. '''
+
+    __metaclass__ = ABCMeta
+
+    def __init__(self, names, rate, on_new_data=None, keep_data=300):
+        ''' @names holds the keywords of the data that will be animated. @rate
+        specifies the simulation time steps. @on_new_data is not needed.
+        @keep_data defines how much data is stored if the RealTimePlot object
+        is not reading data. '''
+        self.rate = rate
+        self._stop = True
+        Buffer.__init__(self, names, on_new_data, keep_data)
+
+    def start(self):
+        ''' Starts the simulation. '''
+        self._stop = False
+        self.init()
+        self._looper()
+
+    def _looper(self):
+        ''' Called by the timer at the specified rate. '''
+        self.add_dict_data(self.loop())
+        if not self._stop:
+            threading.Timer(self.rate, self._looper).start()
+
+    @abstractmethod
+    def loop(self):
+        ''' This method must be overriden by the end user. It must return a
+        dicionary whith the new computed data. The dicionary keys must mutch
+        the string names provided in the constructor. '''
+        pass
+
+    def init(self):
+        ''' End user can override this method to initialize elements if needed.
+        '''
+        pass
+
+    def stop(self):
+        ''' Stops the simulation. Currently only sets a flag so that the timer
+        is not schedule anymore. '''
+        self._stop = True
+
+
 class RealTimePlot(object):
     '''Defines how data received through a channel (serial port or sockets)
     is animated.'''
@@ -256,7 +258,7 @@ class RealTimePlot(object):
         at which animation is updated. @blit for faster animation. @xlim x-axis
         limits. @ylim y-axis limits. @keep_data defines how much data is
         displayed on the figure.'''
-        self.fig, self.ax = create_axes()
+        self.fig, self.ax = utils.create_axes()
         if title is not None:
             self.ax.set_title(title)
         if xlabel is not None:
@@ -289,6 +291,7 @@ class RealTimePlot(object):
         plt.legend()
 
     def show(self):
+        ''' Display the plot window. '''
         plt.show(block=False)
 
     def update(self, i):
@@ -308,69 +311,43 @@ class RealTimePlot(object):
             if self.signal.has_data(name) > 0:
                 _, ly = line.get_data()
                 ly = np.append(ly, self.signal.get_data(name))
-                ly = remove_from_ndarray(ly, self.keep_data)
+                ly = utils.remove_from_ndarray(ly, self.keep_data)
                 line.set_data(self._xdata[:ly.size], ly)
             else:
                 logging.warn('Signal has no data')
         return self.lines
 
-
-class RealTimeApp(object):
-
-    def __init__(self, rtplot, loop, rate):
-        self.rtplot = rtplot
-        self.rate = rate
-        self._loop_func = loop
-        self._stop = True
-        self._args = None
-        self._kwargs = None
-
-    def start(self, *args, **kwargs):
-        self._stop = False
-        self._args, = args
-        self._kwargs = kwargs
-        self._loop()
-
-    def stop(self):
-        self._stop = True
-
-    def _loop(self):
-        self.rtplot.signal.add_dict_data(
-            self._loop_func(self, *self._args, **self._kwargs)
-        )
-        if not self._stop:
-            threading.Timer(self.rate, self._loop).start()
-
 if __name__ == '__main__':
 
-    def loop(app, *args, **kwargs):
-        m, c = args
-        m.u = c.control(motor.encoder_pos(m.x[0], 10))
-        return {'position': m.u}
+    class MotorControl(SystemSimulation):
+        """docstring for MotorControl."""
 
-    R = 1.  # Armature resistance.
-    Kf = 0.1  # Friction coefficient.
-    Kb = 0.01  # Back-emf constant.
-    L = 0.05  # Armature inductance.
-    Kt = 0.01  # Torque constant.
-    J = 0.1  # Rotor's moment of inertia.
-    ts = 20e-3
+        def init(self):
+            R = 1.  # Armature resistance.
+            Kf = 0.1  # Friction coefficient.
+            Kb = 0.01  # Back-emf constant.
+            L = 0.05  # Armature inductance.
+            Kt = 0.01  # Torque constant.
+            J = 0.1  # Rotor's moment of inertia.
 
-    Ts = 2  # Settling time.
-    Pos = 0.05  # Maximum overshoot
+            Ts = 2  # Settling time.
+            Pos = 0.05  # Maximum overshoot
 
-    m = motor.DCMotor(ts, R, L, J, Kt, Kf, Kb)
-    c = controller.position_controller(Ts, Pos, Kf=Kf, Kb=Kb, L=L,
-                                       R=R, J=J, Kt=Kt)
-    c.target = 1.
+            self.m = motor.DCMotor(self.rate, R, L, J, Kt, Kf, Kb)
+            self.c = controller.position_controller(Ts, Pos, Kf=Kf, Kb=Kb, L=L,
+                                                    R=R, J=J, Kt=Kt)
+            self.c.target = 1.
 
-    stream = Buffer(['position'])
+        def loop(self):
+            self.m.u = self.c.control(self.m.x[0])
+            self.m.step()
+            return {'position': self.m.x[0], 'input': self.m.u}
+
+    stream = MotorControl(['position', 'input'], 20e-3)
     rtplot = RealTimePlot(stream, interval=30, autoscale=True, xlim=300.,
                           keep_data=300, ts=0.01, ylim=(0, 150))
     rtplot.show()
-
-    app = RealTimeApp(rtplot, loop, ts)
-    app.start((m, c))
+    stream.start()
     while raw_input('Q to exit\n\r> ').lower() != 'q':
         pass
-    app.stop()
+    stream.stop()
