@@ -1,5 +1,5 @@
-from motor import motor
-from controller import controller
+import motor
+import controller
 import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
@@ -27,7 +27,7 @@ if __name__ == '__main__':
     Kt = 0.01  # Torque constant.
     J = 0.1  # Rotor's moment of inertia.
 
-    m = motor.DCMotor(ts, R, L, J, Kt, Kf, Kb)
+    m = motor.IdealDCMotor(ts, R, L, J, Kt, Kf, Kb)
     vel_pid = controller.velocity_controller(Ts, Pos, Kf=Kf, Kb=Kb, L=L, R=R,
                                              J=J, Kt=Kt)
     pos_pid = controller.position_controller(Ts, Pos, Kf=Kf, Kb=Kb, L=L, R=R,

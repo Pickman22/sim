@@ -1,5 +1,5 @@
 import argparse
-from signals import signals
+import signals
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Serial Port Monitor', )
