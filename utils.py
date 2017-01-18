@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
-logging.getLogger().setLevel(logging.ERROR)
+#logging.getLogger().setLevel(logging.ERROR)
 
 
 def create_axes(title=None, xlabel=None, ylabel=None, legend=None):
@@ -45,6 +45,9 @@ def step(dx, x, ts):
         raise ValueError('System dimension mismatch')
         return np.zeros(x.shape)
 
+
+def append_to_array(array, data):
+    return np.hstack((array, data))
 
 def remove_from_list(data, keep_data):
     '''Remove elements from list @data so that the length matches @keep_data'''

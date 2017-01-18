@@ -8,7 +8,6 @@ import motor
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger().setLevel(logging.DEBUG)
 
-
 def _compute_gains(K, tau, Ts, Pos):
     z = abs(math.log(Pos)) / math.sqrt((math.log(Pos)) ** 2 + math.pi ** 2)
     wn = 4 / (z * Ts)
@@ -39,14 +38,16 @@ def velocity_controller(Ts, Pos, K=None, tau=None, R=None, L=None,
                         J=None, Kt=None, Kb=None, Kf=None):
     ''' Computes PID velocity controller given motor parameters '''
     kp, ki = _motor_controller(Ts, Pos, K, tau, R, L, Kt, Kb, Kf, J)
-    return PID_Controller(kp=kp, ki=ki, kd=0.)
+    return kp, 0., ki
+    #return PID_Controller(kp=kp, ki=ki, kd=0.)
 
 
 def position_controller(Ts, Pos, K=None, tau=None, R=None, L=None,
-                        J=None, Kt=None, Kb=None, Kf=None):
+                        J=None, Kt=None, Kb=None, Kf=None, **kwargs):
     ''' Computes PID position controller given motor parameters '''
     kd, kp = _motor_controller(Ts, Pos, K, tau, R, L, Kt, Kb, Kf, J)
-    return PID_Controller(kp=kp, kd=kd, ki=0.)
+    return kp, kd, 0.
+    #return PID_Controller(kp=kp, kd=kd, ki=0.)
 
 
 def motor_velocity_controller(Ts, Pos, m):
@@ -71,7 +72,7 @@ def compute_K_and_tau(R, L, J, Kt, Kb, Kf):
 class PID_Controller(object):
 
     def __init__(self, kp=0., kd=0., ki=0., target=0., I_MAX=None, I_MIN=None,
-                 ts=20e-3):
+                 ts = 20e-3):
         self.kp = kp
         self.kd = kd
         self.ki = ki
@@ -83,6 +84,7 @@ class PID_Controller(object):
         self._preverr = 0.
         self.I_MIN = I_MIN
         self.I_MAX = I_MAX
+        self.output = 0.
 
     def reset(self):
         self._ie = 0.
@@ -110,9 +112,21 @@ class PID_Controller(object):
         self._preverr = self.error
         return de
 
-    def control(self, y, target=None):
+    def get_output(self):
+        return self.output
+
+    def get_error(self):
+        return self.error
+
+    def step(self, y, target=None, de = None):
         if target is not None:
             self.target = target
         self.error = self.target - y
-        return self.kp * self.error + self.kd * self._derivative()
+        self.output = self.kp * self.error + self.kd * self._derivative()
         + self.ki * self._integral()
+        return self.output
+
+class Motor_PID_Controller(PID_Controller):
+
+    def step(self, x, sensed_x, observed_x, target = None):
+        return PID_Controller.step(self, sensed_x[0], target)
