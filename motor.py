@@ -114,6 +114,7 @@ class MotorSimulation(object):
         self.motor.ts = ts
         self._motor_x0 = self.motor.get_states()
         self.config(t0, tf, ts)
+
         self.set_observer(observer)
         self.set_controller(controller)
 
@@ -126,52 +127,21 @@ class MotorSimulation(object):
         self.motor.set_states(self._motor_x0)
 
     def config(self, t0, tf, ts = None):
-        if self.ts is not None:
+        if self.ts is not None and self.ts <= 0.:
+            raise ValueError('Simulation timestep must be positive.')
+        elif self.ts is not None and self.ts > 0.:
             self.ts = ts
+        if tf <= t0:
+            raise ValueError('Simulation tf must be greater than t0.')
         self.t = np.arange(t0, tf, self.ts)
         if self.t.size == 0:
-            raise ValueError('Sampling time must be less than tf - t0.')
-            logging.debug('Simulation time step: {0}'.format(self.ts))
-
-    def _check_ts(self, obj):
-        if obj.ts < self.ts:
-            raise ValueError('Object time step must be smaller than simulation time step.')
-        #else:
-            #self._obs_counts = round(self.observer.ts / self.ts)
-            #logging.debug('Object time step: {0}'.format(self._obs_counts * self.ts))
-            #self.log['observer'] = np.zeros([3, self.t.size])
-            #self.log['observer'][:, 0] = self.get_observer_estimate().reshape(1, 3)
+            raise ValueError('Time vector size cannot be 0')
 
     def set_observer(self, observer):
-        # Determine observer counts needed by each simulation steps counts.
         self.observer = observer
-        self._obs_current_counts = 1
-        self._check_ts(self.observer)
-        #if self.observer is not None:
-            #if self.observer.ts < self.ts:
-            #    raise ValueError('Observer time step must be smaller than simulation time step.')
-            #else:
-                #self._obs_counts = round(self.observer.ts / self.ts)
-                #logging.debug('Observer time step: {0}'.format(self._obs_counts * self.ts))
-                #self.log['observer'] = np.zeros([3, self.t.size])
-                #self.log['observer'][:, 0] = self.get_observer_estimate().reshape(1, 3)
 
     def set_controller(self, controller):
-        # Determine controller counts needed for each simulation step counts.
         self.controller = controller
-        self._controller_current_counts = 1
-        self._check_ts(self.controller)
-        #if self.controller is not None:
-            #if self.controller.ts < self.ts:
-                #raise ValueError('Controller time step must be smaller than simulation time step.')
-            #else:
-                #self._controller_counts = round(self.controller.ts / self.ts)
-                #self.log['control_signal'] = np.zeros(self.t.size)
-                #self.log['tracking_error'] = np.zeros(self.t.size)
-                #self.log['target'] = np.zeros(self.t.size)
-                #self._ref = copy.deepcopy(target)
-                #logging.debug('Controller time step: {0}'.format(self._controller_counts * self.ts))
-                #logging.debug('Control signal size: {}'.format(self.log.['']))
 
     def _get_target(self, t):
         ret = 0.
@@ -193,16 +163,17 @@ class MotorSimulation(object):
 
     def _step_controller(self, t):
         u = 0.
-        if self._controller_current_counts == self._controller_counts:
-            self._current_target = self._get_target(t)
-            u = self.controller.step(self.motor.get_states(),
-                                 self.motor.get_sensor_data(),
-                                 self.get_observer_estimate(),
-                                 target = self._get_target(t))
-            self._controller_current_counts = 1
-        else:
-            self._controller_current_counts += 1
-            u = self.controller.get_output()
+        if self.controller:
+            if self._controller_current_counts == self._controller_counts:
+                self._current_target = self._get_target(t)
+                u = self.controller.step(self.motor.get_states(),
+                                     self.motor.get_sensor_data(),
+                                     self.get_observer_estimate(),
+                                     target = self._get_target(t))
+                self._controller_current_counts = 1
+            else:
+                self._controller_current_counts += 1
+                u = self.controller.get_output()
         return u
 
     def get_observer_estimate(self):
@@ -212,12 +183,14 @@ class MotorSimulation(object):
             return self.observer.get_value().reshape(3, 1)
 
     def _step_simulation(self, t, idx):
-        u = self._get_input(t)
+        #u = self._get_input(t)
+        u = self._step_controller(t)
 
         if self.controller is not None:
-            self.log['control_signal'][idx] = u
+            self.log['control_signal'][idx] = self.controller.get_output()
             self.log['tracking_error'][idx] = self.controller.get_error()
-            self.log['target'][idx] = self._current_target
+            self.log['target'][idx] = self.controller.get_target()
+            self.log['feedback'][idx] = self.controller.get_feedback()
         # Perform one integration step and get system states. This are usually
         # not available in real applications, unless there's a sensor in the
         # system.
@@ -266,67 +239,61 @@ class MotorSimulation(object):
 
     def _plot_results(self):
         plt.figure()
-        subplt = [311, 312, 313]
-        signal_names = ['Position (rad)', 'Velocity (rad/s)', 'Current (amps)']
 
-        #logging.debug('Time vector size: {0}'.format(self.t.size))
-        #logging.debug('State shape: {0}'.format(self.log['states'].shape))
-        #logging.debug('Sensor shape: {0}'.format(self.log['sensors'].shape))
-        #logging.debug('Observer shape: {0}'.format(self.log['observer'].shape))
+        for splt, x, sensx, obsx, _ylabel in zip([311, 312, 313],\
+                                                 self.log['states'],\
+                                                 self.log['sensors'],\
+                                                 self.log['observer'],\
+                                                 ['Position (rad)', 'Velocity (rad/s)', 'Current (Amps)']):
 
-        for idx, (x, sensed_x, observed_x) in \
-        enumerate(zip(self.log['states'], self.log['sensors'], \
-        self.log['observer'])):
-            plt.subplot(subplt[idx])
-            # All states are always plotted as target.
+            plt.subplot(splt)
+            _legend = ['State']
             plt.plot(self.t, x)
-            legends =['State']
-            # If the first element of the array is None, it means that there is
-            # not a sensor attached to the system to measure this particular state.
-            logging.debug('Testing sensor[0]: {}'.format(sensed_x[0]))
-            if not np.isnan(sensed_x[0]):
-                plt.plot(self.t, sensed_x)
-                legends.append('Sensor')
+            if np.isnan(obsx).any():
+                pass
             else:
-                logging.debug('Skipping None sensor data {}.'.format(idx))
-            # In the same fashion, if the first element of the observer is None,
-            # this means that the observer is not estimating this state.
-            logging.debug('Testing observer[0]: {}'.format(observed_x[0]))
-            if not np.isnan(observed_x[0]):
-                t = np.linspace(self.t[0], self.t[-1], observed_x.size)
-                plt.step(t, observed_x)
-                legends.append('Observer')
+                plt.plot(self.t, obsx)
+                _legend.append('Observer')
+            if np.isnan(sensx).any():
+                pass
             else:
-                logging.debug('Skipping None observer data {}'.format(idx))
-            plt.legend(legends, loc = 'best')
-            plt.ylabel(signal_names[idx])
-        plt.xlabel('Time(s)')
+                plt.plot(self.t, sensx)
+                _legend.append('Sensor')
+            plt.legend(_legend, loc = 'best')
+            plt.ylabel(_ylabel)
+        plt.xlabel('Time (s)')
 
         if self.controller is not None:
-            #t = np.arange(self.t[0], self.t[-1], self.controller.ts)
-            #t = np.linspace(self.t[0], self.t[-1], self.log['control_signal'].size)
-            logging.debug('Time vector size: {}'.format(t.size))
-            logging.debug('Reference size: {}'.format(self.log['target'].size))
-            logging.debug('Control size: {}'.format(self.log['control_signal'].size))
-            logging.debug('Tracking error size: {}'.format(self.log['tracking_error'].size))
+
             plt.figure()
-            plt.subplot(211)
+
+            plt.subplot(311)
             plt.step(self.t, self.log['control_signal'])
             plt.ylabel('Control Signal (Volts)')
-            plt.subplot(212)
-            plt.step(self.t, self.log['tracking_error'])
+
+            plt.subplot(312)
+            plt.step(self.t, self.log['feedback'])
             plt.step(self.t, self.log['target'])
-            plt.ylabel('Tracking Error')
-            plt.legend(['Tracking Error', 'Reference'], loc = 'best')
+            plt.ylabel('Performance')
+            plt.legend(['Feedback', 'Target'], loc = 'best')
+
+            plt.subplot(313)
+            plt.step(self.t, self.log['tracking_error'])
+            plt.ylabel('Error')
+
         plt.xlabel('Time(s)')
 
     def _init_log(self):
-        self.log = {'states': np.zeros([3, self.t.size]), #self.motor.get_states(),
-                    'control_signal': None,
-                    'sensors': np.zeros([3, self.t.size]),
-                    'observer': None,
+
+        self.log = {'states': np.zeros([3, self.t.size]),
+                    'control_signal': np.nan,
+                    'sensors': np.array([np.nan, np.nan, np.nan]),
+                    'observer': np.array([np.nan, np.nan, np.nan]),
                     'tracking_error': None,
-                    'target': None}
+                    'target': np.nan,
+                    'feedback': np.nan,
+                    }
+
         # Initialize State Log.
         self.log['states'][:, 0] = self.motor.get_states().reshape(1, 3)
         # Initialize Controller Log.
@@ -334,6 +301,7 @@ class MotorSimulation(object):
             self.log['control_signal'] = np.zeros(self.t.size)
             self.log['tracking_error'] = np.zeros(self.t.size)
             self.log['target'] = np.zeros(self.t.size)
+            self.log['feedback'] = np.zeros(self.t.size)
         # Initialize Controller Log.
         if self.observer is not None:
             self.log['observer'] = np.zeros([3, self.t.size])
@@ -346,12 +314,26 @@ class MotorSimulation(object):
                 self.log['sensors'][:, 0] = self.motor.get_sensor_data().reshape(1, 3)
                 break
 
+    def _motor_has_sensors(self):
+        ret = False
+        for data in self.motor.get_sensor_data():
+            if data is not None:
+                ret = True
+        return ret
+
     def run(self):
-
         self._init_log()
+        if self.observer:
+            if self.observer.ts < self.ts:
+                raise ValueError('Observer time step: {} is invalid.'.format(self.observer.ts))
+            self._obs_counts = round(self.observer.ts / self.ts)
+            self._obs_current_counts = 1
 
-        self._obs_counts = round(self.observer.ts / self.ts)
-        self._controller_counts = round(self.controller.ts / self.ts)
+        if self.controller:
+            if self.controller.ts < self.ts:
+                raise ValueError('Controller time step: {} is invalid'.format(self.controller.ts))
+            self._controller_counts = round(self.controller.ts / self.ts)
+            self._controller_current_counts = 1
 
         _print_count = 50
         now = time.time()
@@ -377,16 +359,17 @@ if __name__ == '__main__':
 
     sim_ts = 1e-3
     t0 = 0.
-    tf = 4.
+    tf = 5.
     ctrl_ts = 0.02
     obs_ts = sim_ts
 
     m = DCMotor(R = 0.19, L = 0.0005, J = 7.5e-5, Kf = 2e-5, Kb =0.0323,
                 Kt = 0.0323, position_sensor = Encoder(100))
 
-    kp, kd, ki = controller.motor_position_controller(0.05, 0.5, m)
+    kp, ki, kd = controller.motor_position_controller(0.05, 0.05, m)
+    #kp, kd, ki = controller.motor_velocity_controller(0.005, 0.2, m)
 
-    position_controller = controller.Motor_PID_Controller(2. * kp, kd, 0.5, ts = ctrl_ts)
+    controller = controller.Motor_PID_Controller(kp, ki, kd, ts = ctrl_ts)
 
     #target = 10 * np.sin(2 * np.arange(t0, tf, ctrl_ts))
 
@@ -395,14 +378,15 @@ if __name__ == '__main__':
         return 5 * np.sin(3 * t)
 
     sim = MotorSimulation(m, t0, tf, sim_ts, target = target,
-                          observer = MotorSlidingModeObserver(20, obs_ts, tau = 0.03),
+                          #observer = MotorSlidingModeObserver(20, obs_ts, tau = 0.03),
                           #observer = MotorVelocityObserver(obs_ts, m.get_states()),
-                          controller = position_controller, plot_results = True)
+                          controller = controller,
+                          plot_results = True)
     sim.run()
 
-    #sim.set_observer(MotorVelocityObserver(obs_ts, m.get_states()))
-    #sim.reset_motor()
+    sim.reset_motor()
+    sim.set_observer(MotorVelocityObserver(obs_ts, m.get_states()))
 
-    #sim.run()
+    sim.run()
     plt.show()
     #print sim.log

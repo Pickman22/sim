@@ -31,14 +31,15 @@ def _motor_controller(Ts, Pos, K=None, tau=None, R=None,
             return None
         else:
             K, tau = compute_K_and_tau(R, L, J, Kb, Kt, Kf)
+            logging.debug('Motor DC Gain: {}, Time constant: {}'.format(K, tau))
     return _compute_gains(K, tau, Ts, Pos)
 
 
 def velocity_controller(Ts, Pos, K=None, tau=None, R=None, L=None,
-                        J=None, Kt=None, Kb=None, Kf=None):
+                        J=None, Kt=None, Kb=None, Kf=None, **kwargs):
     ''' Computes PID velocity controller given motor parameters '''
     kp, ki = _motor_controller(Ts, Pos, K, tau, R, L, Kt, Kb, Kf, J)
-    return kp, 0., ki
+    return kp, ki, 0.
     #return PID_Controller(kp=kp, ki=ki, kd=0.)
 
 
@@ -46,7 +47,7 @@ def position_controller(Ts, Pos, K=None, tau=None, R=None, L=None,
                         J=None, Kt=None, Kb=None, Kf=None, **kwargs):
     ''' Computes PID position controller given motor parameters '''
     kd, kp = _motor_controller(Ts, Pos, K, tau, R, L, Kt, Kb, Kf, J)
-    return kp, kd, 0.
+    return kp, 0., kd
     #return PID_Controller(kp=kp, kd=kd, ki=0.)
 
 
@@ -85,6 +86,7 @@ class PID_Controller(object):
         self.I_MIN = I_MIN
         self.I_MAX = I_MAX
         self.output = 0.
+        self.feedback = 0.
 
     def reset(self):
         self._ie = 0.
@@ -118,10 +120,17 @@ class PID_Controller(object):
     def get_error(self):
         return self.error
 
-    def step(self, y, target=None, de = None):
+    def get_feedback(self):
+        return self.feedback
+
+    def get_target(self):
+        return self.target
+
+    def step(self, y, target = None):
+        self.feedback = y
         if target is not None:
             self.target = target
-        self.error = self.target - y
+        self.error = self.target - self.feedback
         self.output = self.kp * self.error + self.kd * self._derivative()
         + self.ki * self._integral()
         return self.output
@@ -129,4 +138,4 @@ class PID_Controller(object):
 class Motor_PID_Controller(PID_Controller):
 
     def step(self, x, sensed_x, observed_x, target = None):
-        return PID_Controller.step(self, sensed_x[0], target)
+        return PID_Controller.step(self, x[0], target)
