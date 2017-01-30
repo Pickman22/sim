@@ -6,6 +6,29 @@ logging.basicConfig(level=logging.DEBUG)
 #logging.getLogger().setLevel(logging.ERROR)
 
 
+def create_message(data):
+    ''' Takes a list @data with bytes to be send via a serial or TCP transport,
+    creates a message with the following format:
+
+        START | MSB_SZ | LSB_SZ | DATA | END,
+
+    where START indicates the beginning of a message. MSB_SZ is the most
+    significant byte of the payload size, which is 16-bit. LSB_SZ is the less
+    significant byte of the payload size. DATA is the payload. And END denotes
+    the end of the message. '''
+
+    START, END = 0x00A0, 0x000A
+
+    msg = bytearray(data)
+    sz = len(msg)
+    if sz <= 0x00 or sz > 0xFFFF:
+        raise ValueError('Data list size must be greater than 0 and smaller than 0xFFFF.')
+    msg.insert(0, sz & 0x00FF)
+    msg.insert(0, (sz >> 8) & 0x00FF)
+    msg.insert(0, START)
+    msg.append(END)
+    return msg
+
 def create_axes(title=None, xlabel=None, ylabel=None, legend=None):
     '''Create a figure with modified parameters so that it looks more
     aesthetic. @title is the figure's title, @xlabel is the x-axis' label,
@@ -30,7 +53,6 @@ def create_axes(title=None, xlabel=None, ylabel=None, legend=None):
     ax.yaxis.grid(True, which='major')
     ax.xaxis.grid(True, which='major')
     return fig, ax
-
 
 def step(dx, x, ts):
     ''' Euler integration algorithm. @dx is a numpy.ndarray vector that holds
