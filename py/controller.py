@@ -277,6 +277,23 @@ class ExternController(Controller):
         sensed_x_bytes = self._to_bytes(sensed_x, self.SENS_ID)
         observed_x_bytes = self._to_bytes(observed_x, self.OBS_ID)
         target_bytes = self._to_bytes(target, self.TARGET_ID)
+        '''
+
+        for idx in range(0, len(xbytes), 5):
+            logging.debug('key: {}, value: {}'.format(binascii.hexlify(xbytes[idx]), binascii.hexlify(xbytes[idx + 1 : idx + 5])))
+            logging.debug('key: {}, value: {}'.format(binascii.hexlify(xbytes[idx]), struct.unpack('>i', xbytes[idx + 1 : idx + 5])[0]))
+
+
+        for idx in range(0, len(sensed_x_bytes), 5):
+            logging.debug('key: {}, value: {}'.format(binascii.hexlify(sensed_x_bytes[idx]), struct.unpack('>i', sensed_x_bytes[idx + 1 : idx + 5])[0]))
+
+        for idx in range(0, len(observed_x_bytes), 5):
+            logging.debug('key: {}, value: {}'.format(binascii.hexlify(observed_x_bytes[idx]), struct.unpack('>i', observed_x_bytes[idx + 1 : idx + 5])[0]))
+
+        for idx in range(0, len(target_bytes), 5):
+            logging.debug('key: {}, value: {}'.format(binascii.hexlify(target_bytes[idx]), struct.unpack('>i', target_bytes[idx + 1 : idx + 5])[0]))
+
+        '''
         self.transport.write(cmd + xbytes + sensed_x_bytes + observed_x_bytes +\
                              target_bytes)
 

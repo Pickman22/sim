@@ -9,7 +9,7 @@ import copy
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger().setLevel(logging.DEBUG)
 
-class Remote_PIDController(controller.Motor_PID_Controller):
+class Remote_PID_Controller(controller.PID_Controller):
 
     GET_ERROR_CMD = 0x13
     GET_OUTPUT_CMD = 0x10
@@ -52,9 +52,9 @@ class Remote_PIDController(controller.Motor_PID_Controller):
     TIME_ID = 0x30
     TARGET_ID = 0x31
 
-    def __init__(self, transport, **kwargs):
+    def __init__(self, transport, scaling = 1e3, **kwargs):
         self.transport = transport
-
+        self.scaling = float(scaling)
         self._signal_dict = {self.X1_ID: np.nan,
                              self.X2_ID: np.nan,
                              self.X3_ID: np.nan,
@@ -72,9 +72,9 @@ class Remote_PIDController(controller.Motor_PID_Controller):
                           self.GET_FEEDBACK_CMD: self.get_feedback,
                           self.GET_TARGET_CMD: self.get_target,}
 
-        super(controller.Motor_PID_Controller, self).__init__(**kwargs)
+        super(Remote_PID_Controller, self).__init__(**kwargs)
 
-    def start(self):
+    def run(self):
         if self.transport.is_connected:
             msg = self.transport.read()
             cmd, = struct.unpack('>B', msg[0])
@@ -82,10 +82,13 @@ class Remote_PIDController(controller.Motor_PID_Controller):
                 logging.debug('Executing: {}'.format(self._cmd_dict[cmd]))
                 if cmd == self.STEP_CMD:
                     assert(len(msg) > 1)
-                    self.step(msg[1:])
+                    ret = int(self.step(msg[1:]) * float(self.scaling))
                 else:
                     assert(len(msg) == 1)
-                    self._cmd_dict[cmd]()
+                    ret = int(self._cmd_dict[cmd]() * float(self.scaling))
+                bytes = struct.pack('>i', ret)
+                logging.debug('Command response value: {}'.format(binascii.hexlify(bytes)))
+                self.transport.write(struct.pack('>i', ret))
             else:
                 logging.warning('Unknown command {}'.format(cmd))
 
@@ -94,23 +97,25 @@ class Remote_PIDController(controller.Motor_PID_Controller):
         # of the byte array data is not divisible by 5, it means that we are
         # getting corrupt data.
         assert((len(bytes) % 5) == 0)
-        #TODO: Convert bytes into actual dataaaaaaaaaaaa.
+        data_dict = {}
+        for idx in range(0, len(bytes), 5):
+            k = struct.unpack('>B', bytes[idx])[0]
+            v = struct.unpack('>i', bytes[idx + 1 : idx + 5])[0] / float(self.scaling)
+            logging.debug('key: {}, value: {}'.format(k, v))
+            if self._signal_dict.has_key(k):
+                self._signal_dict[k] = v
+            else:
+                self._signal_dict[k] = np.nan
+        logging.debug('Step data dict: {}'.format(data_dict))
+        return super(Remote_PID_Controller, self).step(self._signal_dict[self.X2_ID], target = self._signal_dict[self.TARGET_ID])
 
 if __name__ == '__main__':
     message = struct.pack('>i', 24000)
     tcp = transport.TCPClientTransport()
 
-    remote_controller = Remote_PIDController(tcp)
+    remote_controller = Remote_PID_Controller(tcp, kp = 0.002, ki = 0.503, kd = 0.0, ts = 20e-3)
 
     while tcp.is_connected:
-        #print binascii.hexlify(tcp.read())
-        #msg = tcp.read()
-        remote_controller.start()
-        try:
-            remote_controller.transport.write(message)
-        #try:
-        #    tcp.write(message)
-        except:
-            pass
+        remote_controller.run()
     remote_controller.transport.disconnect()
     #tcp.disconnect()

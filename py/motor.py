@@ -366,7 +366,7 @@ class MotorSimulation(object):
 if __name__ == '__main__':
     sim_ts = 1e-3
     t0 = 0.
-    tf = 0.5
+    tf = 2.
     ctrl_ts = 20e-3
     obs_ts = ctrl_ts
 
@@ -386,7 +386,7 @@ if __name__ == '__main__':
                           #observer = MotorSlidingModeObserver(20, obs_ts, tau = 0.03),
                           observer = MotorPositionDifferentiator(obs_ts, m.get_states()),
                           controller = ext_controller,
-                          plot_results = False)
+                          plot_results = True)
 
     sim.run()
     ext_controller.transport.disconnect()

@@ -109,7 +109,9 @@ class TCPTransport(Transport):
             self._write_bytes(self.SHUTDOWN_MSG)
             self.is_connected = False
             self.conn.shutdown(socket.SHUT_RDWR)
-        self.conn.close()
+            self.conn.close()
+        else:
+            raise RuntimeError('Called disconnect when not connected.')
         logging.debug('Connection closed.')
 
     def _write_bytes(self, data):
