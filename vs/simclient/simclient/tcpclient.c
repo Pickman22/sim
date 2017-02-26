@@ -5,6 +5,15 @@
 #include <ws2tcpip.h>
 #include <stdint.h>
 
+/******************************************************************************
+	MOCK OBJECTS FOR UNIT TESTING.
+******************************************************************************/
+#ifdef RUN_TESTS
+#define send mock_send
+#define recv mock_recv
+#endif
+/*****************************************************************************/
+
 #pragma comment(lib, "Ws2_32.lib")
 
 #define TCPCLIENT_START		((uint8_t)0x0A)
@@ -112,25 +121,6 @@ int TCPClient_read(SOCKET sock, uint8_t* data, uint16_t len) {
 		return APP_ERROR;
 	}
 	return actual_sz;
-}
-
-int TCPClient_write_code(SOCKET sock, uint8_t code) {
-	char cmd[] = { TCPCLIENT_START, 0x00, 0x01, code };
-	int ret;
-	if (sock == INVALID_SOCKET) {
-		return APP_ERROR;
-	}
-	ret = send(sock, cmd, sizeof(cmd), 0);
-	if (ret == SOCKET_ERROR) {
-		ret = SOCKET_ERROR;
-	}
-	else if (ret != sizeof(cmd)) {
-		ret = APP_ERROR;
-	}
-	else {
-		ret = APP_NO_ERROR;
-	}
-	return ret;
 }
 
 int TCPClient_write(SOCKET sock, const uint8_t * const data, uint16_t len) {

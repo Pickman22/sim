@@ -12,8 +12,6 @@ SOCKET TCPClient_connect(const char * const server_ip, const char * const port);
 
 int TCPClient_read(SOCKET sock, uint8_t* data, uint16_t len);
 
-int TCPClient_write_code(SOCKET sock, uint8_t code);
-
 int TCPClient_write(SOCKET sock, const uint8_t * const bytes, uint16_t len);
 
 int TCPClient_disconnect(SOCKET sock);

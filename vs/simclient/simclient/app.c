@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "tcpclient.h"
 
-int main()
+int app()
 {
 	char msg[] = "Hello, from python!";
 	char buffer[128];
