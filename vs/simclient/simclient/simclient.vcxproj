@@ -151,11 +151,19 @@
     <ClCompile Include="AllTests.c" />
     <ClCompile Include="app.c" />
     <ClCompile Include="main.c" />
+    <ClCompile Include="simclient.c" />
+    <ClCompile Include="SimClient_tests.c" />
     <ClCompile Include="tcpclient.c" />
+    <ClCompile Include="TCPClient_tests.c" />
+    <ClCompile Include="utils.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="controller.h" />
+    <ClInclude Include="observer.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="simclient.h" />
     <ClInclude Include="tcpclient.h" />
+    <ClInclude Include="utils.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

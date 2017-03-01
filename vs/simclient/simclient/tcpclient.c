@@ -97,11 +97,14 @@ int TCPClient_read(SOCKET sock, uint8_t* data, uint16_t len) {
 	uint8_t last_byte;
 	memset(data, 0, len);
 	ret = recv(sock, data, 3, 0);
+	if (ret == SOCKET_ERROR) {
+		return SOCKET_ERROR;
+	}
 	if ((data[0] != TCPCLIENT_START) || (ret != 3)) {
 		return APP_ERROR;
 	}
 	actual_sz = (data[1] << 8) | data[2];
-	if (actual_sz > len) {
+	if (actual_sz > len || actual_sz == 0) {
 		return APP_ERROR;
 	}
 	bytes_left = actual_sz;
